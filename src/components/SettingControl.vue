@@ -19,6 +19,7 @@ import MarriageTraitPairsControl from './MarriageTraitPairsControl.vue'
 import PetRelationshipControl from './PetRelationshipControl.vue'
 import SituationOutfitsControl from './SituationOutfitsControl.vue'
 import OccultPregnancyControl from './OccultPregnancyControl.vue'
+import DefaultStatusBadge from './DefaultStatusBadge.vue'
 
 const props = defineProps({
   meta: { type: Object as PropType<SettingMeta>, required: true },
@@ -171,6 +172,7 @@ onBeforeUnmount(() => emit('error', null))
     :aria-disabled="disabled || undefined"
     :inert="disabled && (isStructured || !!numberArray || isCsvNumbers || isRange || !!agingEntries.length)"
   >
+    <DefaultStatusBadge :setting-key="meta.key" />
     <div v-if="meta.readOnlyReason" class="min-w-0 space-y-3" :aria-label="`${meta.label} (read-only)`">
       <p class="text-xs leading-relaxed text-muted-foreground">{{ meta.readOnlyReason }}</p>
       <pre data-readonly-value class="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/30 p-3 text-xs text-muted-foreground">{{ JSON.stringify(modelValue, null, 2) }}</pre>

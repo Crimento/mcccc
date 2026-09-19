@@ -6,6 +6,7 @@ import { skillBlocks, skillListKeys } from '@/lib/skill-settings'
 import { Button } from '@/components/ui/button'
 import SettingControl from './SettingControl.vue'
 import SkillListControl from './SkillListControl.vue'
+import DefaultStatusBadge from './DefaultStatusBadge.vue'
 
 const props = defineProps<{
   settings: SettingMeta[]
@@ -98,6 +99,7 @@ function controlId(key: string) {
 
           <p class="text-xs leading-relaxed text-muted-foreground">{{ descriptions[setting.key] }}</p>
 
+          <DefaultStatusBadge v-if="isSkillList(setting.key)" :setting-key="setting.key" />
           <SkillListControl
             v-if="isSkillList(setting.key)"
             :id="controlId(setting.key)"

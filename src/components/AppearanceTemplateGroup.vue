@@ -5,7 +5,9 @@ import type { SettingMeta } from '@/lib/catalog'
 import type { JsonValue, SettingsRecord } from '@/lib/config'
 import type { AppearanceTemplateGroup } from '@/lib/appearance-templates'
 import { Button } from '@/components/ui/button'
+import { useDefaultComparisons } from '@/composables/defaultComparisonContext'
 import StructuredValueEditor from './StructuredValueEditor.vue'
+import DefaultStatusBadge from './DefaultStatusBadge.vue'
 
 type TemplateGroup = Omit<AppearanceTemplateGroup, 'profiles'> & {
   profiles: (AppearanceTemplateGroup['profiles'][number] & { meta: SettingMeta })[]
@@ -72,6 +74,12 @@ const fieldCount = computed(() => visibleProfiles.value.reduce((count, profile) 
   count + (profileObjects.value[profile.key] ? Object.keys(profileObjects.value[profile.key]!).length : 1), 0))
 const hasErrors = computed(() => visibleProfiles.value.some(profile => props.errors[profile.key]))
 const hasChanges = computed(() => visibleProfiles.value.some(profile => props.changedKeys.has(profile.key)))
+const defaultComparisons = useDefaultComparisons()
+const defaultCounts = computed(() => visibleProfiles.value.reduce((counts, profile) => {
+  const status = defaultComparisons.value.get(profile.key)?.status
+  if (status === 'different' || status === 'unknown') counts[status]++
+  return counts
+}, { different: 0, unknown: 0 }))
 
 function profileId(key: string) {
   return `${props.id}-${encodeURIComponent(key)}`
@@ -159,6 +167,10 @@ onBeforeUnmount(() => {
         <span v-if="hasErrors" class="size-1.5 rounded-full bg-destructive" aria-label="Contains an invalid value" />
         <span v-else-if="hasChanges" class="size-1.5 rounded-full bg-primary" aria-label="Modified" />
       </Button>
+      <div v-if="!expanded && (defaultCounts.different || defaultCounts.unknown)" :data-default-group-summary="group.id" class="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+        <span v-if="defaultCounts.different" data-default-count="different" class="text-control">{{ defaultCounts.different }} non-default</span>
+        <span v-if="defaultCounts.unknown" data-default-count="unknown" class="text-muted-foreground" title="A documented default is not known for these profiles.">{{ defaultCounts.unknown }} unknown</span>
+      </div>
       <p v-if="!expanded && hasErrors" :id="`${id}-collapsed-error`" class="text-xs text-destructive">Expand to correct invalid values.</p>
     </div>
 
@@ -182,6 +194,7 @@ onBeforeUnmount(() => {
             <Button v-if="changedKeys.has(profile.key) || errors[profile.key]" type="button" variant="ghost" size="xs" :aria-label="`Undo ${profile.meta.label}`" @click="emit('undo', profile.key)">Undo</Button>
           </div>
           <code class="block break-all text-[10px] leading-relaxed text-muted-foreground">{{ profile.key }}</code>
+          <DefaultStatusBadge :setting-key="profile.key" />
           <Button
             type="button"
             variant="ghost"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import {
   ArrowDownToLine, ArrowRight, BookOpen, Check, ChevronDown,
   CircleHelp, Clock3, Download, ExternalLink, FileCheck2, FileSliders,
@@ -67,6 +67,9 @@ import { occultSpecies, settingMenuPaths } from '@/lib/occult-settings'
 import { applyPreset, cloneConfig, isEqual, parseConfig, type JsonValue, type SettingsRecord } from '@/lib/config'
 import { useConfigEditor } from '@/composables/useConfigEditor'
 import { useVisibleSetting } from '@/composables/useVisibleSetting'
+import { defaultComparisonKey } from '@/composables/defaultComparisonContext'
+import { compareSettingDefault } from '@/lib/default-comparison'
+import { defaultBaselineInfo } from '@/data/default-settings-info'
 
 const {
   original, current, fileName, isExample, epoch, errors, availableDraft,
@@ -77,6 +80,7 @@ const activeCategory = ref('all')
 const activeMenu = ref<string[]>([])
 const query = ref('')
 const modifiedOnly = ref(false)
+const nonDefaultOnly = ref(false)
 const impactOnly = ref(false)
 const invalidOnly = ref(false)
 const sidebarOpen = ref(false)
@@ -194,7 +198,7 @@ const menuDescriptions: Record<string, string> = {
   'woohoo/Sim Nudity/Nudity Interactions': 'Choose the interactions affected by nudity settings.',
   'woohoo/Other Settings': 'Control autonomy, rest time, the optional skill, and birth control.',
 }
-const browsingMenus = computed(() => !query.value.trim() && !impactOnly.value && !modifiedOnly.value && !invalidOnly.value)
+const browsingMenus = computed(() => !query.value.trim() && !impactOnly.value && !modifiedOnly.value && !nonDefaultOnly.value && !invalidOnly.value)
 
 function isSelectedMenu(category: string, path: string[] = []) {
   return browsingMenus.value && activeCategory.value === category
@@ -206,6 +210,14 @@ const allSettings = computed(() => Object.entries(original.value)
   .map(([key, value]) => getSettingMeta(key, value))
   .sort(compareSettingsForNavigation))
 const settings = computed(() => allSettings.value.filter(setting => !setting.internal))
+const defaultComparisons = computed(() => new Map(settings.value.map(setting => [
+  setting.key, compareSettingDefault(setting, current.value[setting.key]!),
+])))
+provide(defaultComparisonKey, defaultComparisons)
+const nonDefaultKeys = computed(() => new Set([...defaultComparisons.value]
+  .filter(([, comparison]) => comparison.status === 'different').map(([key]) => key)))
+const unknownDefaultCount = computed(() => [...defaultComparisons.value.values()]
+  .filter(comparison => comparison.status === 'unknown').length)
 const selectedOccultSpecies = computed(() => browsingMenus.value && activeCategory.value === 'occult'
   ? occultSpecies.find(species => species.label === activeMenu.value[0])?.label : undefined)
 
@@ -532,6 +544,7 @@ const matches = computed(() => {
     if (browsingMenus.value && activeCategory.value !== 'all'
       && (setting.category !== activeCategory.value || !settingMenuPaths(setting).some(path => pathStartsWith(path, activeMenu.value)))) return false
     if (modifiedOnly.value && !changedSet.value.has(setting.key)) return false
+    if (nonDefaultOnly.value && !nonDefaultKeys.value.has(setting.key)) return false
     if (impactOnly.value && !setting.impact) return false
     if (invalidOnly.value && !errors[setting.key]) return false
     const categoryLabel = categories.find(category => category.id === setting.category)?.label ?? ''
@@ -561,6 +574,10 @@ const groupHeadings = computed(() => {
 const listTitle = computed(() => {
   if (invalidOnly.value) return 'Settings to check'
   if (query.value.trim()) return 'Search results'
+  if (nonDefaultOnly.value) {
+    const title = modifiedOnly.value ? 'Modified non-default settings' : 'Non-default settings'
+    return impactOnly.value ? `${title} with gameplay notes` : title
+  }
   if (modifiedOnly.value && impactOnly.value) return 'Modified settings with gameplay notes'
   if (modifiedOnly.value) return 'Your changes'
   if (impactOnly.value) return 'Gameplay notes'
@@ -626,6 +643,9 @@ const breadcrumbs = computed(() => {
 const listDescription = computed(() => {
   if (invalidOnly.value) return 'Correct these values before downloading your config.'
   if (query.value.trim()) return 'Searching names, descriptions, choices, config keys, and menu paths across all modules.'
+  if (nonDefaultOnly.value) return modifiedOnly.value
+    ? 'Your edits that also differ from MCCC defaults. Undo restores the imported value.'
+    : `Compared with MCCC ${defaultBaselineInfo.mcccVersion} defaults, including differences already present in your imported file.`
   if (modifiedOnly.value) return 'Compared with the file you started from. Undo brings back its original value.'
   if (impactOnly.value) return 'Some players enjoy these options; others find them intrusive. Choose what suits your game.'
   if (activeMenu.value.length) {
@@ -656,9 +676,21 @@ const presetPatch = computed(() => Object.fromEntries(Object.entries(preset.valu
   .filter(([key, value]) => Object.hasOwn(current.value, key) && typeof current.value[key] === typeof value)) as SettingsRecord)
 const presetChanges = computed(() => Object.entries(presetPatch.value).filter(([key, value]) => !isEqual(current.value[key], value)))
 const presetSkipped = computed(() => Object.keys(preset.value.changes).length - Object.keys(presetPatch.value).length)
+const emptyState = computed(() => {
+  if (modifiedOnly.value && !changes.value.length && !query.value.trim()) return {
+    title: 'No changes here yet', description: 'Your config matches the file you started from. Changes will appear here as you edit.',
+  }
+  if (nonDefaultOnly.value && !modifiedOnly.value && !query.value.trim() && !impactOnly.value) return {
+    title: 'No known non-default settings',
+    description: unknownDefaultCount.value
+      ? 'The settings we can compare match their defaults. Settings marked Default unknown cannot be compared.'
+      : `Your settings match the MCCC ${defaultBaselineInfo.mcccVersion} defaults.`,
+  }
+  return { title: 'No matching settings', description: 'Try a shorter search, a config key, or clear the active filters.' }
+})
 
-watch([activeCategory, activeMenu, query, modifiedOnly, impactOnly, invalidOnly], () => { pageSize.value = 50 })
-watch([activeCategory, activeMenu, query, modifiedOnly, impactOnly, invalidOnly, epoch], clearViewedSetting, { flush: 'sync' })
+watch([activeCategory, activeMenu, query, modifiedOnly, nonDefaultOnly, impactOnly, invalidOnly], () => { pageSize.value = 50 })
+watch([activeCategory, activeMenu, query, modifiedOnly, nonDefaultOnly, impactOnly, invalidOnly, epoch], clearViewedSetting, { flush: 'sync' })
 
 function toast(message: string) {
   notice.value = message
@@ -672,6 +704,7 @@ function applyMenuLocation(id: string, path: string[]) {
   activeMenu.value = [...path]
   query.value = ''
   modifiedOnly.value = false
+  nonDefaultOnly.value = false
   impactOnly.value = false
   invalidOnly.value = false
   sidebarOpen.value = false
@@ -765,6 +798,7 @@ function applySelectedPreset() {
   epoch.value++
   presetsOpen.value = false
   modifiedOnly.value = true
+  nonDefaultOnly.value = false
   impactOnly.value = false
   query.value = ''
   toast(count ? `Preset applied to ${count} ${count === 1 ? 'setting' : 'settings'}.` : 'Your config already matches this preset.')
@@ -849,7 +883,7 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <div class="my-4 h-1" />
-        <button class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition-colors hover:bg-accent/60" :class="impactOnly ? 'bg-warning-background font-medium text-warning' : 'text-muted-foreground'" @click="impactOnly = !impactOnly; modifiedOnly = false; invalidOnly = false; query = ''; sidebarOpen = false"><MessageSquareWarning class="size-4" /> Gameplay notes <span class="ml-auto text-[10px]">{{ impactCount }}</span></button>
+        <button class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition-colors hover:bg-accent/60" :class="impactOnly ? 'bg-warning-background font-medium text-warning' : 'text-muted-foreground'" @click="impactOnly = !impactOnly; modifiedOnly = false; nonDefaultOnly = false; invalidOnly = false; query = ''; sidebarOpen = false"><MessageSquareWarning class="size-4" /> Gameplay notes <span class="ml-auto text-[10px]">{{ impactCount }}</span></button>
       </nav>
       <div class="space-y-3 p-5">
         <button class="flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground" @click="aboutOpen = true"><BookOpen class="size-3.5" /> About & setting reference <ExternalLink class="size-3" /></button>
@@ -872,12 +906,18 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="importError" class="mb-5 flex items-start justify-between gap-3 rounded-lg bg-destructive/5 p-4 text-sm text-destructive" role="alert"><p>{{ importError }}</p><button aria-label="Dismiss error" @click="importError = ''"><X class="size-4" /></button></div>
-      <div v-if="errorCount" class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-destructive/5 p-4 text-sm text-destructive" role="alert"><span>{{ errorCount }} {{ errorCount === 1 ? 'setting needs' : 'settings need' }} a valid value before export.</span><Button variant="outline" size="sm" @click="invalidOnly = true; query = ''; modifiedOnly = false; impactOnly = false">Show fields to fix</Button></div>
+      <div v-if="errorCount" class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-destructive/5 p-4 text-sm text-destructive" role="alert"><span>{{ errorCount }} {{ errorCount === 1 ? 'setting needs' : 'settings need' }} a valid value before export.</span><Button variant="outline" size="sm" @click="invalidOnly = true; query = ''; modifiedOnly = false; nonDefaultOnly = false; impactOnly = false">Show fields to fix</Button></div>
 
       <div class="mb-6 flex flex-wrap items-center gap-3">
         <div class="relative w-full min-w-48 sm:w-auto sm:flex-1"><Search class="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" /><Input id="settings-search" v-model="query" class="h-10 bg-card pl-9 pr-16 text-sm" placeholder="Find a setting…" aria-label="Search settings" /><button v-if="query" class="absolute right-3 top-3 text-muted-foreground" aria-label="Clear search" @click="query = ''"><X class="size-4" /></button><kbd v-else class="pointer-events-none absolute right-3 top-2.5 hidden rounded bg-muted px-1.5 py-0.5 font-sans text-[10px] text-muted-foreground sm:block">⌘ / Ctrl K</kbd></div>
-        <Button :variant="modifiedOnly ? 'secondary' : 'outline'" class="h-10 gap-2 bg-card text-xs" :class="modifiedOnly ? 'bg-accent text-primary' : ''" :aria-pressed="modifiedOnly" @click="modifiedOnly = !modifiedOnly; invalidOnly = false"><ListFilter class="size-3.5" /> Modified only <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{{ changes.length }}</span></Button>
+        <Button :variant="nonDefaultOnly ? 'secondary' : 'outline'" class="h-10 gap-2 bg-card text-xs" :class="nonDefaultOnly ? 'bg-accent text-primary' : ''" :aria-pressed="nonDefaultOnly" aria-describedby="default-comparison-help" @click="nonDefaultOnly = !nonDefaultOnly; invalidOnly = false"><ListFilter class="size-3.5" /> Non-default only <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{{ nonDefaultKeys.size }}</span></Button>
+        <Button :variant="modifiedOnly ? 'secondary' : 'outline'" class="h-10 gap-2 bg-card text-xs" :class="modifiedOnly ? 'bg-accent text-primary' : ''" :aria-pressed="modifiedOnly" title="Changes made since importing this file" aria-describedby="default-comparison-help" @click="modifiedOnly = !modifiedOnly; invalidOnly = false"><ListFilter class="size-3.5" /> Modified only <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">{{ changes.length }}</span></Button>
         <Button variant="outline" class="h-10 text-xs sm:hidden" aria-label="Explore presets" @click="presetsOpen = true"><Sparkles class="size-4" /> Presets</Button>
+      </div>
+
+      <div data-default-summary class="-mt-3 mb-5 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+        <p><span class="font-medium text-foreground">{{ nonDefaultKeys.size }} {{ nonDefaultKeys.size === 1 ? 'setting differs' : 'settings differ' }} from MCCC defaults</span><span v-if="unknownDefaultCount"> · {{ unknownDefaultCount }} {{ unknownDefaultCount === 1 ? 'default unknown' : 'defaults unknown' }}</span></p>
+        <p id="default-comparison-help">Baseline: MCCC {{ defaultBaselineInfo.mcccVersion }}, including WooHoo. “Modified only” shows edits since importing this file.</p>
       </div>
 
       <div v-if="impactOnly || invalidOnly" class="-mt-3 mb-5 flex flex-wrap gap-2">
@@ -892,7 +932,7 @@ onBeforeUnmount(() => {
         <div v-if="impactOnly" class="mb-4 flex gap-3 rounded-lg bg-warning-background p-4 text-xs leading-relaxed text-warning"><Info class="mt-0.5 size-4 shrink-0" /><p><strong class="font-semibold">Choose what suits your game.</strong> These notes explain possible interruptions and wider effects. A highlighted setting may already be off.</p></div>
 
         <div class="space-y-3">
-          <div v-if="!matches.length" class="flex flex-col items-center px-6 py-16 text-center"><div class="mb-4 rounded-full bg-muted p-4"><Search class="size-6 text-muted-foreground" /></div><h3 class="text-sm font-medium">{{ modifiedOnly && !query ? 'No changes here yet' : 'No matching settings' }}</h3><p class="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">{{ modifiedOnly && !query ? 'Your config matches the file you started from. Changes will appear here as you edit.' : 'Try a shorter search, a config key, or clear the active filters.' }}</p><Button variant="outline" size="sm" class="mt-5" @click="selectCategory('all')">Show all settings</Button></div>
+          <div v-if="!matches.length" class="flex flex-col items-center px-6 py-16 text-center"><div class="mb-4 rounded-full bg-muted p-4"><Search class="size-6 text-muted-foreground" /></div><h3 class="text-sm font-medium">{{ emptyState.title }}</h3><p class="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">{{ emptyState.description }}</p><Button variant="outline" size="sm" class="mt-5" @click="selectCategory('all')">Show all settings</Button></div>
 
           <!-- Keep controls mounted while filtering so incomplete input is never silently discarded. -->
           <template v-for="item in editorItems" :key="`${epoch}-${item.key}`">
@@ -1297,10 +1337,10 @@ onBeforeUnmount(() => {
 
     <Dialog v-model:open="presetsOpen"><DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle class="flex items-center gap-2"><Sparkles class="size-5 text-primary" /> A small change of pace</DialogTitle><DialogDescription>Presets adjust a few settings in your current file. Review exactly what changes before applying.</DialogDescription></DialogHeader><div class="space-y-3 py-2"><button v-for="item in presets" :key="item.id" class="w-full rounded-lg p-4 text-left transition-colors hover:bg-muted/50" :class="selectedPreset === item.id ? 'bg-accent/70' : ''" :aria-pressed="selectedPreset === item.id" @click="selectedPreset = item.id"><div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">{{ item.name }}</span><Check v-if="selectedPreset === item.id" class="size-4 text-primary" /></div><p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">{{ item.description }}</p></button></div><div class="rounded-lg bg-muted/60 p-4"><p class="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{{ presetChanges.length }} {{ presetChanges.length === 1 ? 'setting' : 'settings' }} will change</p><div v-for="([key, value]) in presetChanges" :key="key" class="mb-2 flex items-center justify-between gap-3 text-xs"><span>{{ labelFor(key) }}</span><span class="flex shrink-0 items-center gap-2"><span class="text-muted-foreground">{{ formatValue(current[key]) }}</span><ArrowRight class="size-3 text-muted-foreground" /><strong class="font-medium text-primary">{{ formatValue(value) }}</strong></span></div><p v-if="!presetChanges.length" class="text-xs text-muted-foreground">Your settings already match the available options in this preset.</p><p v-if="presetSkipped" class="mt-3 text-xs text-muted-foreground">{{ presetSkipped }} options aren’t compatible with this file and will be skipped.</p></div><DialogFooter><Button variant="outline" @click="presetsOpen = false">Cancel</Button><Button :disabled="!presetChanges.length || !!errorCount" @click="applySelectedPreset">Apply {{ presetChanges.length }} {{ presetChanges.length === 1 ? 'change' : 'changes' }}</Button></DialogFooter><p v-if="errorCount" class="text-xs text-destructive">Correct incomplete fields before applying a preset.</p></DialogContent></Dialog>
 
-    <Dialog v-model:open="exportOpen"><DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>Your settings, ready for the game</DialogTitle><DialogDescription>{{ changes.length ? `${changes.length} settings changed from your starting file.` : 'No settings changed. The download will preserve your current configuration.' }}</DialogDescription></DialogHeader><div v-if="isExample" class="rounded-lg bg-warning-background p-3 text-xs leading-relaxed text-warning">This config is based on the supplied example, not MCCC factory defaults. Import your own config first if you want to preserve your existing setup.</div><div v-if="changes.length" class="max-h-64 space-y-2 overflow-y-auto rounded-lg"><div v-for="key in changes" :key="key" class="px-4 py-3"><p class="mb-1.5 text-xs font-medium">{{ labelFor(key) }}</p><div class="flex items-start gap-2 text-[11px]"><span class="min-w-0 flex-1 break-all text-muted-foreground">{{ formatValue(original[key]) }}</span><ArrowRight class="mt-0.5 size-3 shrink-0 text-muted-foreground" /><span class="min-w-0 flex-1 break-all text-primary">{{ formatValue(current[key]) }}</span></div></div></div><div class="rounded-lg bg-muted/60 p-4 text-xs leading-relaxed"><p class="font-medium">Put your config into play</p><ol class="mt-2 list-inside list-decimal space-y-1.5 text-muted-foreground"><li>Close The Sims 4 before replacing the file.</li><li>Keep a backup of your current config.</li><li>Replace <code class="text-foreground">mc_settings.cfg</code> in your MCCC mod folder with the download.</li></ol></div><DialogFooter class="gap-2"><Button variant="outline" @click="download(original, 'mc_settings.original.cfg'); toast('Original configuration downloaded.')"><ArrowDownToLine class="size-4" /> Original backup</Button><Button :disabled="!!errorCount" @click="exportConfig"><Download class="size-4" /> Download mc_settings.cfg</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog v-model:open="exportOpen"><DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>Your settings, ready for the game</DialogTitle><DialogDescription>{{ changes.length ? `${changes.length} settings changed from your starting file.` : 'No settings changed. The download will preserve your current configuration.' }}</DialogDescription></DialogHeader><div v-if="isExample" class="rounded-lg bg-warning-background p-3 text-xs leading-relaxed text-warning">You’re editing the supplied example, based on MCCC {{ defaultBaselineInfo.mcccVersion }} defaults. Import your own config first to preserve your existing setup.</div><div v-if="changes.length" class="max-h-64 space-y-2 overflow-y-auto rounded-lg"><div v-for="key in changes" :key="key" class="px-4 py-3"><p class="mb-1.5 text-xs font-medium">{{ labelFor(key) }}</p><div class="flex items-start gap-2 text-[11px]"><span class="min-w-0 flex-1 break-all text-muted-foreground">{{ formatValue(original[key]) }}</span><ArrowRight class="mt-0.5 size-3 shrink-0 text-muted-foreground" /><span class="min-w-0 flex-1 break-all text-primary">{{ formatValue(current[key]) }}</span></div></div></div><div class="rounded-lg bg-muted/60 p-4 text-xs leading-relaxed"><p class="font-medium">Put your config into play</p><ol class="mt-2 list-inside list-decimal space-y-1.5 text-muted-foreground"><li>Close The Sims 4 before replacing the file.</li><li>Keep a backup of your current config.</li><li>Replace <code class="text-foreground">mc_settings.cfg</code> in your MCCC mod folder with the download.</li></ol></div><DialogFooter class="gap-2"><Button variant="outline" @click="download(original, 'mc_settings.original.cfg'); toast('Original configuration downloaded.')"><ArrowDownToLine class="size-4" /> Original backup</Button><Button :disabled="!!errorCount" @click="exportConfig"><Download class="size-4" /> Download mc_settings.cfg</Button></DialogFooter></DialogContent></Dialog>
 
     <Dialog v-model:open="resetOpen"><DialogContent><DialogHeader><DialogTitle>Restore your starting settings?</DialogTitle><DialogDescription>This will undo all {{ changes.length }} changes and restore the configuration you imported or started with. It does not restore MCCC factory defaults.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" @click="resetOpen = false">Keep editing</Button><Button @click="resetAll(); resetOpen = false; toast('Starting settings restored.')">Restore starting settings</Button></DialogFooter></DialogContent></Dialog>
     <Dialog v-model:open="replaceOpen"><DialogContent><DialogHeader><DialogTitle>Open a different configuration?</DialogTitle><DialogDescription>Importing {{ pendingFile?.name }} will replace the current draft. Download your changes first if you want to keep them.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" @click="replaceOpen = false; pendingFile = null">Keep editing</Button><Button @click="acceptFile">Import new configuration</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog v-model:open="aboutOpen"><DialogContent class="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>A calmer way to configure MCCC</DialogTitle><DialogDescription>An independent, unofficial editor for Deaderpool’s MC Command Center.</DialogDescription></DialogHeader><div class="space-y-4 text-sm leading-relaxed text-muted-foreground"><p>Files are read and edited in your browser. Your draft is saved on this device; no account or upload is needed.</p><p>Most descriptions and verified option values come from the official MCCC reference. The bundled snapshot contains {{ referenceInfo.recordCount }} entries, retrieved {{ referenceInfo.retrievedAt }}. Some settings are documented through user-provided in-game observations, identified in the setting details. This config does not identify its MCCC version, so some settings and EA defaults may differ.</p><p>Additional keys and unfamiliar option codes are preserved. Gameplay notes are guidance about behavior, not a judgment about how you should play.</p><p>The supplied example is a personal configuration. It is not a set of factory defaults.</p><a :href="referenceSource" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 font-medium text-primary underline underline-offset-4">Open the official settings reference <ExternalLink class="size-3.5" /></a></div></DialogContent></Dialog>
+    <Dialog v-model:open="aboutOpen"><DialogContent class="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>A calmer way to configure MCCC</DialogTitle><DialogDescription>An independent, unofficial editor for Deaderpool’s MC Command Center.</DialogDescription></DialogHeader><div class="space-y-4 text-sm leading-relaxed text-muted-foreground"><p>Files are read and edited in your browser. Your draft is saved on this device; no account or upload is needed.</p><p>Most descriptions and verified option values come from the official MCCC reference. The bundled snapshot contains {{ referenceInfo.recordCount }} entries, retrieved {{ referenceInfo.retrievedAt }}. Some settings are documented through user-provided in-game observations, identified in the setting details. This config does not identify its MCCC version, so some settings and EA defaults may differ.</p><p>Additional keys and unfamiliar option codes are preserved. Gameplay notes are guidance about behavior, not a judgment about how you should play.</p><p>The default comparison uses a freshly recreated MCCC {{ defaultBaselineInfo.mcccVersion }} configuration, including MC WooHoo, verified on {{ defaultBaselineInfo.capturedAt }}. The supplied example matches that snapshot. Defaults can differ between versions; keys absent from the snapshot use documented defaults when those are unambiguous. Unknown defaults are identified separately.</p><a :href="referenceSource" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 font-medium text-primary underline underline-offset-4">Open the official settings reference <ExternalLink class="size-3.5" /></a></div></DialogContent></Dialog>
   </div>
 </template>

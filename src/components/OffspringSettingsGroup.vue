@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import SettingControl from './SettingControl.vue'
 import PercentageDistributionControl from './PercentageDistributionControl.vue'
 import OffspringWeightsControl from './OffspringWeightsControl.vue'
+import DefaultStatusBadge from './DefaultStatusBadge.vue'
 
 const props = withDefaults(defineProps<{
   settings: SettingMeta[]
@@ -97,6 +98,10 @@ function updateGenders(value: number[]) {
             <p class="font-medium">{{ setting.impact.title }}</p>
             <p class="leading-relaxed">{{ setting.impact.description }}</p>
           </div>
+          <DefaultStatusBadge
+            v-if="(setting.key === 'Pregnancy_OffspringGenderPercents' && offspringGenders(values[setting.key])) || (setting.key === 'Pregnancy_PercentWeights' && isSettingsObject(values[setting.key]))"
+            :setting-key="setting.key"
+          />
           <PercentageDistributionControl
             v-if="setting.key === 'Pregnancy_OffspringGenderPercents' && offspringGenders(values[setting.key])"
             :key="`${setting.key}:${resetVersions[setting.key] ?? 0}`"

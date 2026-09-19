@@ -4,7 +4,9 @@ import { ChevronRight } from '@lucide/vue'
 import type { SettingMeta } from '@/lib/catalog'
 import type { JsonValue, SettingsRecord } from '@/lib/config'
 import { Button } from '@/components/ui/button'
+import { useDefaultComparisons } from '@/composables/defaultComparisonContext'
 import StructuredValueEditor from './StructuredValueEditor.vue'
+import DefaultStatusBadge from './DefaultStatusBadge.vue'
 
 type LifespanProfile = { key: string; label: string; meta: SettingMeta }
 type LifespanGroup = {
@@ -47,6 +49,12 @@ const fieldCount = computed(() => visibleProfiles.value.reduce((count, profile) 
 }, 0))
 const hasErrors = computed(() => visibleProfiles.value.some(profile => props.errors[profile.key]))
 const hasChanges = computed(() => visibleProfiles.value.some(profile => props.changedKeys.has(profile.key)))
+const defaultComparisons = useDefaultComparisons()
+const defaultCounts = computed(() => visibleProfiles.value.reduce((counts, profile) => {
+  const status = defaultComparisons.value.get(profile.key)?.status
+  if (status === 'different' || status === 'unknown') counts[status]++
+  return counts
+}, { different: 0, unknown: 0 }))
 
 const fields = computed(() => {
   const result = props.group.fields.map(field => ({ ...field, known: true }))
@@ -164,6 +172,10 @@ onBeforeUnmount(() => {
         <span v-if="hasErrors" class="size-1.5 rounded-full bg-destructive" aria-label="Contains an invalid value" />
         <span v-else-if="hasChanges" class="size-1.5 rounded-full bg-primary" aria-label="Modified" />
       </Button>
+      <div v-if="!expanded && (defaultCounts.different || defaultCounts.unknown)" :data-default-group-summary="group.id" class="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+        <span v-if="defaultCounts.different" data-default-count="different" class="text-control">{{ defaultCounts.different }} non-default</span>
+        <span v-if="defaultCounts.unknown" data-default-count="unknown" class="text-muted-foreground" title="A documented default is not known for these profiles.">{{ defaultCounts.unknown }} unknown</span>
+      </div>
       <p v-if="!expanded && hasErrors" :id="`${id}-collapsed-error`" class="text-xs text-destructive">Expand to correct invalid values.</p>
     </div>
 
@@ -225,6 +237,7 @@ onBeforeUnmount(() => {
             >Undo</Button>
           </div>
           <code class="block break-all text-[10px] leading-relaxed text-muted-foreground">{{ profile.key }}</code>
+          <DefaultStatusBadge :setting-key="profile.key" />
           <Button
             type="button"
             variant="ghost"

@@ -40,9 +40,10 @@ Deploy the `dist/` directory to a static host. The default configuration assumes
 - Review subjective gameplay notes separately from ordinary settings. Marriage approval prompts are distinct from notification posts.
 - Preview three small presets and apply only compatible settings already present in the imported file.
 - Review changes, undo individual edits or all changes, and download the finished `.cfg` plus an optional original backup.
+- Identify settings that differ from MCCC defaults immediately after import. **Non-default only** compares against a freshly recreated MCCC **2026.5.0** configuration, including MC WooHoo; **Modified only** compares against your imported file. The separate snapshot in `src/data/default-settings.json` covers all 439 editable settings and excludes three internal values. For keys absent from that snapshot, verified in-game observations and unambiguous reference defaults are used where available. Unknown keys, incompatible structures, and ambiguous defaults remain marked **Default unknown**. Comparisons preserve the file; defaults can differ between MCCC versions.
 - Resume a locally saved draft after reopening the page.
 
-The supplied `mc_settings.cfg` is bundled as an explicitly labelled example. It is a personal configuration, **not factory defaults**. Replace this fixture before distributing a public build if you want a different example. The original file is never overwritten by this app.
+The supplied `mc_settings.cfg` is bundled as an explicitly labelled example. On 2026-09-20, the user supplied a fresh default configuration and confirmed MCCC **2026.5.0**, including MC WooHoo. All 442 values matched the existing example. The verified comparison snapshot is stored separately so replacing the example does not change the default baseline. The original file is never overwritten by this app.
 
 To use an exported config, close The Sims 4, back up the current file, then replace `mc_settings.cfg` in the MCCC mod directory. Browser downloads do not modify the mod folder automatically.
 
@@ -82,7 +83,7 @@ node scripts/update-reference.mjs
 node scripts/update-reference.mjs /path/to/menu_data.json
 ```
 
-Then review `src/lib/catalog.ts` for changed option encodings, ranges, gameplay notes, and the reference retrieval date. Automated refresh does not change these manually verified mappings. MCCC defaults sometimes contain prose or incomplete data, so this editor does not claim to generate factory defaults.
+Then review `src/lib/catalog.ts` for changed option encodings, ranges, gameplay notes, and the reference retrieval date. Automated refresh does not change these manually verified mappings or the versioned default snapshot. The default comparison is read-only: Undo and Reset changes still restore the imported file, and exports do not insert missing default settings.
 
 ## Verification
 
